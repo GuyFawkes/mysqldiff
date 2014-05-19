@@ -438,16 +438,16 @@ sub _add_ref_tables {
                     }
                     push @changes, [$change, {'k' => 6}];
                     if (!$self->{opts}{'refs'}) {
-                            if (!$self->{opts}{'only-both'}) {
-                                    my $fks = $table->foreign_key();
-                                    for my $fk (keys %$fks) {
-                                        debug(3, "FK $fk for created table $name added");
-                                        $change = '';
-                                        $change = $self->add_header($table, 'add_fk') unless !$self->{opts}{'list-tables'};
-                                        $change .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fks->{$fk};\n";
-                                        push @changes, [$change, {'k' => 1}];
-                                    }
+                        if (!$self->{opts}{'only-both'}) {
+                            my $fks = $table->foreign_key();
+                            for my $fk (keys %$fks) {
+                                debug(3, "FK $fk for created table $name added");
+                                $change = '';
+                                $change = $self->add_header($table, 'add_fk') unless !$self->{opts}{'list-tables'};
+                                $change .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fks->{$fk};\n";
+                                push @changes, [$change, {'k' => 1}];
                             }
+                        }
                     }
                 }
             }
@@ -488,6 +488,7 @@ sub _diff_tables {
     $self->{added_pk_col} = 0;
     $self->{dropped_columns} = {};
     $self->{changed_to_empty_char_col} = {};
+    $self->{changed_for_fk} = {};
     $self->{added_index} = {};
     $self->{added_for_fk} = {};
     $self->{fk_for_pk} = {};
@@ -629,8 +630,7 @@ sub _diff_fields {
                         my $change = '';
                         if ($f2 =~ /CHAR\s*\(0\)/is) {
                             debug(3, "field $field is changed to CHAR(0)");
-                            $self->{changed_to_empty_char_col}{'field'}  = $field;
-                            $self->{changed_to_empty_char_col}{'weight'} = $weight;
+                            $self->{changed_to_empty_char_col}{$field}  = $weight;
                         } 
                         if (!$self->{changed_pk_auto_col}) {
                             $change =  $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
@@ -638,10 +638,32 @@ sub _diff_fields {
                             $change .= " # was $f1" unless $self->{opts}{'no-old-defs'};
                             $change .= "\n";
                             if ($f2 =~ /(CURRENT_TIMESTAMP(?:\(\))?|NOW\(\)|LOCALTIME(?:\(\))?|LOCALTIMESTAMP(?:\(\))?)/) {
-                                    $weight = 1;
+                                $weight = 1;
                             }
-                            # column must be changed/added first
-                            push @changes, [$change, {'k' => $weight}];   
+                            my $col_fks1 = $table1->get_fk_by_col($field);
+                            my $col_fks2 = $table2->get_fk_by_col($field);
+                            my $store_fk = 0;
+                            if ($col_fks1 && $col_fks2) {
+                                for my $col_fk (keys %$col_fks1) {
+                                    my $fk1 = $col_fks1->{$col_fk};
+                                    my $fk2 = $col_fks2->{$col_fk};
+                                    if ($fk2 && ($fk2 ne $fk1)) {
+                                        # if there is FK for this column, and it will be changed later,
+                                        # we need to store this information for wrapping like:
+                                        # 1. DROP FK
+                                        # 2. CHANGE COLUMN
+                                        # 3. ADD FK
+                                        $self->{changed_for_fk}{$col_fk}{$field} = {};
+                                        $self->{changed_for_fk}{$col_fk}{$field}{'stmt'} = $change;
+                                        $self->{changed_for_fk}{$col_fk}{$field}{'weight'} = $weight;
+                                        $store_fk = 1;
+                                    }
+                                }
+                            }
+                            if (!$store_fk) {
+                                # column must be changed/added first
+                                push @changes, [$change, {'k' => $weight}];
+                            }
                         } else {
                             $self->{changed_pk_auto_col} = "CHANGE COLUMN $field $field $f2$pk;";
                         }
@@ -1073,8 +1095,8 @@ sub _diff_indices {
                                 $changes .= $self->_add_index_wa_routines($name1, $temp_index_name, "ALTER TABLE $name1 ADD INDEX $temp_index_name ($index_part);", 'create') . "\n";
                             }
                         }
-                        if ($self->{changed_to_empty_char_col}{'field'} && ($self->{changed_to_empty_char_col}{'field'} eq $index_part)) {
-                            $weight = $self->{changed_to_empty_char_col}{'weight'} + 1;
+                        if (defined($self->{changed_to_empty_char_col}{$index_part})) {
+                            $weight = $self->{changed_to_empty_char_col}{$index_part} + 1;
                         }
                     }
                 }
@@ -1325,6 +1347,7 @@ sub _diff_foreign_key {
                     $changes = $self->add_header($table1, 'change_fk', 1) unless !$self->{opts}{'list-tables'};
                     my $dropped_columns = $self->{dropped_columns};
                     my $dropped_column_fks;
+                    my $changed_columns = $self->{changed_for_fk}{$fk};
                     $changes .= "ALTER TABLE $name1 DROP FOREIGN KEY $fk;";
                     $changes .= " # was CONSTRAINT $fk FOREIGN KEY $fks1->{$fk}"
                         unless $self->{opts}{'no-old-defs'};
@@ -1339,14 +1362,37 @@ sub _diff_foreign_key {
                             }
                         }
                     }
-                    $changes .= "\nALTER TABLE $name1 ADD CONSTRAINT $fk FOREIGN KEY $fks2->{$fk};\n";    
                     # CHANGE FK after column for it may be changed
                     my $weight = 5;
+                    my $min_weight = $weight;
+                    if ($changed_columns) {
+                        $changes .= "\n";
+                        for my $changed_col (keys %$changed_columns) {
+                            my $changed_data    = $changed_columns->{$changed_col};
+                            my $changed_weight  = $changed_data->{'weight'};
+                            my $changed_stmt    = $changed_data->{'stmt'};
+                            if ($changed_weight > $weight) {
+                                $weight = $changed_weight;
+                            }
+                            if ($changed_weight < $min_weight) {
+                                $min_weight = $changed_weight;
+                            }
+                            $changes .= $changed_stmt;
+                        }
+                        push @changes, [$changes, {'k' => $weight}];
+                        $changes = '';
+                    }
+                    $weight = $min_weight;
+                    if (!$changes) {
+                        $changes = $self->add_header($table1, 'change_fk', 1) unless !$self->{opts}{'list-tables'};
+                    } else {
+                        $changes .= "\n";
+                    }
+                    $changes .= "ALTER TABLE $name1 ADD CONSTRAINT $fk FOREIGN KEY $fks2->{$fk};\n";
                     if ($self->{added_for_fk}{$fk}) {
                         # if fk was changed and it reference by new column, change it after column adding
                         $weight = $self->{added_for_fk}{$fk};
                     }
-                            
                     push @changes, [$changes, {'k' => $weight}]; 
                 }
             } else {
@@ -1432,8 +1478,14 @@ sub _diff_options {
                 debug(3, "Column $column was already dropped, so we must not drop temporary index");
             } else {
                 debug(3, "Dropped temporary index $temporary_index");
-                $change .= $self->add_header($table1, 'drop_temporary_index') unless !$self->{opts}{'list-tables'};
-                $change .= $self->_add_index_wa_routines($name, $temporary_index, "ALTER TABLE $name DROP INDEX $temporary_index;", 'drop') . "\n";
+                my $tmp_change = '';
+                $tmp_change .= $self->add_header($table1, 'drop_temporary_index') unless !$self->{opts}{'list-tables'};
+                $tmp_change .= $self->_add_index_wa_routines($name, $temporary_index, "ALTER TABLE $name DROP INDEX $temporary_index;", 'drop') . "\n";
+                if (defined($self->{changed_to_empty_char_col}{$column})) {
+                    push @changes, [$tmp_change, {'k' => $self->{changed_to_empty_char_col}{$column} + 1}];
+                } else {
+                    $change .= $tmp_change;
+                }
             }
         }
     }
