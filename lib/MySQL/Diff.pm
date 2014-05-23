@@ -612,7 +612,7 @@ sub _diff_fields {
                                     # we must to change this column later, if it was PK in table in first database
                                     # otherwise, it will be not 'DEFAULT NULL', but, for example, for INT column "NOT NULL DEFAULT '0'"
                                     debug(3, "executing DEFAULT NULL change later for field '$field', because it was PK");
-                                    $weight = 3;    
+                                    $weight = 3;
                                 }
                                 if ($f1 =~ /AUTO_INCREMENT/is) {
                                     # now we need to just change this column when drop primary key
@@ -1285,7 +1285,7 @@ sub _diff_primary_key {
         }
         # If PK's column(s) ALL was dropped, we mustn't drop itself; for auto columns we already create indexes
         if (!$pk_ops) {
-            debug(2, "PK $primary1 was dropped");
+            debug(2, "Old PK $primary1 was dropped");
             $changes .= "ALTER TABLE $name1 DROP PRIMARY KEY";
             if ($self->{changed_pk_auto_col}) {
                 $changes .= ', ' . $self->{changed_pk_auto_col}; 
@@ -1315,7 +1315,7 @@ sub _diff_primary_key {
             }   
         }               
     }
-    
+
     if ($changes) {
         $changes = $self->add_header($table1, $action_type) . $changes unless !$self->{opts}{'list-tables'};
         push @changes, [$changes, {'k' => $k}]; 
@@ -1377,7 +1377,7 @@ sub _diff_foreign_key {
                             if ($changed_weight < $min_weight) {
                                 $min_weight = $changed_weight;
                             }
-                            $changes .= $changed_stmt;
+                            push @changes, [$changed_stmt, {'k' => $changed_weight}];
                         }
                         push @changes, [$changes, {'k' => $weight}];
                         $changes = '';
