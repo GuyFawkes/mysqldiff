@@ -631,8 +631,8 @@ sub _diff_fields {
                         if ($f2 =~ /CHAR\s*\(0\)/is) {
                             debug(3, "field $field is changed to CHAR(0)");
                             $self->{changed_to_empty_char_col}{$field}  = $weight;
-                        } 
-                        if (!$self->{changed_pk_auto_col}) {
+                        }
+                        if (!$self->{changed_pk_auto_col} || ($self->{changed_pk_auto_col} ne 1)) {
                             $change =  $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
                             $change .= "ALTER TABLE $name1 CHANGE COLUMN $field $field $f2$pk;";
                             $change .= " # was $f1" unless $self->{opts}{'no-old-defs'};
@@ -747,30 +747,30 @@ sub _diff_fields {
                 my $header_text = 'add_column';
                 # if it is PK...
                 if ($table2->isa_primary($field)) { 
-                        if ($size == 1) {
-                            # if PK is non-composite we can to add PRIMARY KEY clause
-                            debug(3, "field $field is a primary key");
-                            $pk = ' PRIMARY KEY' . $position;
+                    if ($size == 1) {
+                        # if PK is non-composite we can to add PRIMARY KEY clause
+                        debug(3, "field $field is a primary key");
+                        $pk = ' PRIMARY KEY' . $position;
+                        $weight = 1;
+                        $header_text = 'add_pk';
+                        # Flag we add PK's column(s)
+                        $self->{added_pk} = 1;
+                        $self->{added_pk_col} = $field;
+                    } else {
+                        # This way, we can to add PRIMARY KEY __operator__ when last part of PK was obtained
+                        debug(3, "field $field is a part of composite primary key");
+                        if ($field eq $f_last) {
+                            debug(3, "field '$field' is a last part of composite primary key");
+                            my $p = $table2->primary_key();
+                            $pk = $position . ", ADD PRIMARY KEY $p";
                             $weight = 1;
                             $header_text = 'add_pk';
                             # Flag we add PK's column(s)
                             $self->{added_pk} = 1;
                             $self->{added_pk_col} = $field;
-                        } else {
-                            # This way, we can to add PRIMARY KEY __operator__ when last part of PK was obtained
-                            debug(3, "field $field is a part of composite primary key");
-                            if ($field eq $f_last) {
-                                debug(3, "field '$field' is a last part of composite primary key");
-                                my $p = $table2->primary_key();
-                                $pk = $position . ", ADD PRIMARY KEY $p";
-                                $weight = 1;
-                                $header_text = 'add_pk';
-                                # Flag we add PK's column(s)
-                                $self->{added_pk} = 1;
-                                $self->{added_pk_col} = $field;
-                            }
                         }
-                        $alters->{$field} = $self->_add_routine_alters($field, $field_links, $table2);
+                    }
+                    $alters->{$field} = $self->_add_routine_alters($field, $field_links, $table2);
                 }
                 
                 my $fks_for_added = $table2->get_fk_by_col($field);
