@@ -837,6 +837,11 @@ sub _add_index_wa_routines {
     # remove quotes to use it in SELECT within stored procedure
     $table =~ s/`//sg;
     $index_name =~ s/`//sg;
+    # quote statement string like addslashes() function in PHP
+    $stmt =~ s/\\/\\\\/g;
+    $stmt =~ s/'/\\'/g;
+    $stmt =~ s/"/\\"/g;
+    $stmt =~ s/\\0/\\\\0/g;
     return "CALL `$name` ('$table', '$index_name', '$stmt', '$stmt_type');"
 }
 

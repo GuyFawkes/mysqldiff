@@ -341,7 +341,8 @@ sub _get_defs {
         my $db_password = $self->{auth_data}{password};
         my $errcb = sub {     
             my $message = shift;
-            print "Error from DBI:\n";
+            print "Error from DBI while fetching differences:\n";
+            print $DBI::lasth->{Statement} . "\n";
             print DBI->errstr. "\n";
             print "mysqldiff cannot get diff because of this error\n";
             exit(1);  
@@ -442,7 +443,8 @@ sub _parse_defs {
         my $db_password = $self->{auth_data}{password};
         my $errcb = sub {     
             my $message = shift;
-            print "Error from DBI:\n";
+            print "Error from DBI while parsing differences:\n";
+            print $DBI::lasth->{Statement} . "\n";
             print DBI->errstr. "\n";
             print "mysqldiff cannot get diff because of this error\n";
             exit(1);  
