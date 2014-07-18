@@ -238,6 +238,25 @@ CREATE_STMT
         }
     }
 
+    if (!$self->{opts}{'refs'}) {
+        # do the rest of job
+        my $changed = $self->{changed_referenced};
+        if ($changed) {
+            for my $table_name (keys $changed) {
+                for my $field_name (keys $changed->{$table_name}) {
+                    my $checked = $changed->{$table_name}{$field_name}{'checked'};
+                    if (!$checked) {
+                        push @changes, [
+                            $changed->{$table_name}{$field_name}{'stmt'},
+                            {'k' => $changed->{$table_name}{$field_name}{'weight'}}
+                        ];
+                        $self->{changed_referenced}{$table_name}{$field_name}{'checked'} = 1;
+                    }
+                }
+            }
+        }
+    }
+
     for my $routine1 (@routines_keys) {
         my $name = $routine1->name();
         my $r_type = $routine1->type();
@@ -499,7 +518,7 @@ sub _diff_tables {
     push @changes, $self->_diff_indices(@_);
     push @changes, $self->_diff_primary_key(@_);
     push @changes, $self->_diff_foreign_key(@_);
-    push @changes, $self->_diff_options(@_);    
+    push @changes, $self->_diff_options(@_);
 
     $changes[-1][0] =~ s/\n*$/\n/  if (@changes);
     return @changes;
@@ -643,20 +662,67 @@ sub _diff_fields {
                             my $col_fks1 = $table1->get_fk_by_col($field);
                             my $col_fks2 = $table2->get_fk_by_col($field);
                             my $store_fk = 0;
+                            $self->{detected_changed}{$name1}{$field} = $weight;
+                            # there is some references to current changed field
+                            if ($self->{detected_changed_refs}{$name1}{$field}) {
+                                my $referenced = $self->{detected_changed_refs}{$name1}{$field};
+                                for my $ref_tbl (keys %$referenced) {
+                                    my $ref_data = $referenced->{$ref_tbl};
+                                    for my $ref_field (keys %$ref_data) {
+                                        if ($self->{detected_changed}{$ref_tbl}{$ref_field}) {
+                                            # if we already changed referenced column, we need to replace
+                                            # CHANGE COLUMN statement within DROP FK -> CHANGE COLUMN -> ADD FK
+                                            push @changes, $self->_diff_equal_fks(
+                                                $ref_tbl,
+                                                $ref_field,
+                                                $weight + 1,
+                                                $weight - 1,
+                                                $ref_tbl
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                             if ($col_fks1 && $col_fks2) {
                                 for my $col_fk (keys %$col_fks1) {
                                     my $fk1 = $col_fks1->{$col_fk};
                                     my $fk2 = $col_fks2->{$col_fk};
-                                    if ($fk2 && ($fk2 ne $fk1)) {
-                                        # if there is FK for this column, and it will be changed later,
-                                        # we need to store this information for wrapping like:
-                                        # 1. DROP FK
-                                        # 2. CHANGE COLUMN
-                                        # 3. ADD FK
-                                        $self->{changed_for_fk}{$col_fk}{$field} = {};
-                                        $self->{changed_for_fk}{$col_fk}{$field}{'stmt'} = $change;
-                                        $self->{changed_for_fk}{$col_fk}{$field}{'weight'} = $weight;
-                                        $store_fk = 1;
+                                    if ($fk2) {
+                                        if ($fk2 ne $fk1) {
+                                            # if there is FK for this column, and it will be changed later,
+                                            # we need to store this information for wrapping like:
+                                            # 1. DROP FK
+                                            # 2. CHANGE COLUMN
+                                            # 3. ADD FK
+                                            $self->{changed_for_fk}{$col_fk}{$field} = {};
+                                            $self->{changed_for_fk}{$col_fk}{$field}{'stmt'} = $change;
+                                            $self->{changed_for_fk}{$col_fk}{$field}{'weight'} = $weight;
+                                            $store_fk = 1;
+                                        } else {
+                                            # if FKs are equal,
+                                            my $referenced = $table2->get_referenced($field);
+                                            for my $ref (keys %$referenced) {
+                                                my $ref_table = $referenced->{$ref}{'table'};
+                                                my $fk_stmt = $referenced->{$ref}{'fk'};
+                                                $self->{detected_changed_refs}{$ref_table}{$ref}{$name1}{$field} = 1;
+                                                $self->{changed_referenced}{$name1}{$field} = {};
+                                                $self->{changed_referenced}{$name1}{$field}{'stmt'} = $change;
+                                                $self->{changed_referenced}{$name1}{$field}{'weight'} = $weight;
+                                                $self->{changed_referenced}{$name1}{$field}{'fk'} = $fk_stmt;
+                                                $self->{changed_referenced}{$name1}{$field}{'checked'} = 0;
+                                                $store_fk = 1;
+                                                if ($self->{detected_changed}{$ref_table}{$ref}) {
+                                                    my $ref_w = $self->{detected_changed}{$ref_table}{$ref};
+                                                    push @changes, $self->_diff_equal_fks(
+                                                        $name1,
+                                                        $field,
+                                                        $ref_w + 1,
+                                                        $ref_w - 1,
+                                                        $ref_table
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -822,7 +888,7 @@ sub _add_routine_alters {
     while ($field_links->{'next_field'}) {
         my $next_field = $field_links->{'next_field'};
         if ($self->{added_cols}{$next_field}) {
-            $res .= "ALTER TABLE $name CHANGE COLUMN $next_field $next_field $fields->{$next_field} AFTER $current_field;\n";   
+            $res .= "ALTER TABLE $name CHANGE COLUMN $next_field $next_field $fields->{$next_field} AFTER $current_field;\n";
         }
         $field_links = $table->fields_links($next_field);
         $current_field = $next_field;
@@ -1325,6 +1391,82 @@ sub _diff_primary_key {
         $changes = $self->add_header($table1, $action_type) . $changes unless !$self->{opts}{'list-tables'};
         push @changes, [$changes, {'k' => $k}]; 
     }
+    return @changes;
+}
+
+sub _diff_equal_fks {
+    my ($self, $name, $field, $weight, $min_weight, $ref_table) = @_;
+    my @changes;
+    my $changed_data = $self->{changed_referenced}{$name}{$field};
+    my $checked = $chaned_data->{'checked'};
+
+    return () if $checked;
+
+    my $fk = $changed_data->{'fk'}{'name'};
+    my $fkv1 = $changed_data->{'fk'}{'value'};
+    my $table1 = $self->db1->table_by_name($name);
+    my $table2 = $self->db2->table_by_name($name);
+    my $fks2 = $table2->foreign_key();
+    my $fkv2 = $fks2->{$fk};
+
+    my $changes = '';
+    my $temp_index_name = "eqfk_temp_".md5_hex($field)."_drop";
+    $self->{temporary_indexes}{$temp_index_name} = $field;
+    $changes .= $self->add_header($table1, 'change_fk', 1) unless !$self->{opts}{'list-tables'};
+    $changes .= $self->_add_index_wa_routines(
+        $name,
+        $temp_index_name,
+        "ALTER TABLE $name ADD INDEX $temp_index_name ($field);",
+        'create'
+    ) . "\n";
+    $changes .= "ALTER TABLE $name DROP FOREIGN KEY $fk;";
+    $changes .= " # was CONSTRAINT $fk FOREIGN KEY $fkv1"
+        unless $self->{opts}{'no-old-defs'};
+    $changes .= "\n";
+    my $changed_weight  = $changed_data->{'weight'};
+    my $changed_stmt    = $changed_data->{'stmt'};
+    if ($changed_weight > $weight) {
+        $weight = $changed_weight;
+    }
+    if ($changed_weight < $min_weight) {
+        $min_weight = $changed_weight;
+    }
+    push @changes, [$changes, {'k' => $weight}];
+    push @changes, [$changed_stmt , {'k' => $changed_weight}];
+    $changes = '';
+    $weight = $min_weight;
+    $changes = $self->add_header($self->db2->table_by_name($ref_table), 'change_fk', 1) unless !$self->{opts}{'list-tables'};
+    # get index for FK
+    my $indices = $table2->indices();
+    for my $index (keys %$indices) {
+        my $parts = $table2->indices_parts($index);
+        my $created = 0;
+        for my $part (keys %$parts) {
+            if ($part eq $field) {
+                my $new_type = $table2->is_unique($index) ? 'UNIQUE' :
+                               $table2->is_fulltext($index) ? 'FULLTEXT INDEX' : 'INDEX';
+                my $opts = $table2->indices_opts($index) || '';
+                my $index_wa_stmt = $self->_add_index_wa_routines(
+                    $name,
+                    $index,
+                    "ALTER TABLE $name ADD $new_type $index ($indices->{$index})$opts;",
+                    'create'
+                );
+                $changes .= $index_wa_stmt . "\n";
+                $created = 1;
+                last;
+            }
+        }
+        if ($created) {
+            last;
+        }
+    }
+    $changes .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fkv2;\n";
+
+    push @changes, [$changes, {'k' => $weight}];
+
+    $self->{changed_referenced}{$name}{$field}{'checked'} = 1;
+
     return @changes;
 }
 

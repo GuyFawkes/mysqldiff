@@ -165,6 +165,7 @@ sub options         { my $self = shift; return $self->{options};        }
 sub foreign_key     { my $self = shift; return $self->{foreign_key};    }
 sub fk_tables       { my $self = shift; return $self->{fk_tables};      }
 sub get_fk_by_col   { my $self = shift; return $self->{fk_by_column}{$_[0]}; }
+sub get_referenced  { my $self = shift; return $self->{inverted_referenced}{$_[0]}; }
 
 sub isa_field       { my $self = shift; return $_[0] && $self->{fields}{$_[0]}   ? 1 : 0;       }
 sub isa_primary     { my $self = shift; return $_[0] && $self->{primary}{$_[0]}  ? 1 : 0;       }
@@ -246,6 +247,20 @@ sub _parse {
             $column_name =~ s/\((.*?)\)/$1/;
             $self->{fk_by_column}{$_}{$key} = $val for(split(/,/, $column_name));
             $self->{fk_tables}{$tbl_name} = 1;
+            $opts =~ /\((.*?)\)/;
+            my @column_parts = split(/,/, $column_name);
+            my @referenced_parts = split(/,/, $1);
+
+            foreach my $referenced (@referenced_parts) {
+                foreach my $column_part (@column_parts) {
+                    #$self->{referenced_columns}{$referenced}{$column_part}  = $self->{foreign_key}{$key};
+                    $self->{inverted_referenced}{$column_part}{$referenced} = {};
+                    $self->{inverted_referenced}{$column_part}{$referenced}{'table'} = $tbl_name;
+                    $self->{inverted_referenced}{$column_part}{$referenced}{'fk'} = {};
+                    $self->{inverted_referenced}{$column_part}{$referenced}{'fk'}{'value'} = $self->{foreign_key}{$key};
+                    $self->{inverted_referenced}{$column_part}{$referenced}{'fk'}{'name'} = $key;
+                }
+            }
             $fk_line = 1;
             my $q_line_copy = quotemeta($line_copy);
             $self->{def} =~ s/$q_line_copy//gs;
