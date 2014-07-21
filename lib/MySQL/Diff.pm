@@ -652,7 +652,7 @@ sub _diff_fields {
                             $self->{changed_to_empty_char_col}{$field}  = $weight;
                         }
                         if (!$self->{changed_pk_auto_col} || ($self->{changed_pk_auto_col} ne 1)) {
-                            $change =  $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
+                            $change = '';
                             $change .= "ALTER TABLE $name1 CHANGE COLUMN $field $field $f2$pk;";
                             $change .= " # was $f1" unless $self->{opts}{'no-old-defs'};
                             $change .= "\n";
@@ -677,7 +677,7 @@ sub _diff_fields {
                                                 $ref_field,
                                                 $weight + 1,
                                                 $weight - 1,
-                                                $ref_tbl
+                                                $name1
                                             );
                                         }
                                     }
@@ -727,6 +727,9 @@ sub _diff_fields {
                                 }
                             }
                             if (!$store_fk) {
+                                my $change_header = '';
+                                $change_header = $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
+                                $change = $change_header . $change;
                                 # column must be changed/added first
                                 push @changes, [$change, {'k' => $weight}];
                             }
@@ -1410,9 +1413,12 @@ sub _diff_equal_fks {
     my $fkv2 = $fks2->{$fk};
 
     my $changes = '';
-    my $temp_index_name = "eqfk_temp_".md5_hex($field)."_drop";
-    $self->{temporary_indexes}{$temp_index_name} = $field;
-    $changes .= $self->add_header($table1, 'change_fk', 1) unless !$self->{opts}{'list-tables'};
+    my $temp_index_name = "eqfk_temp_".md5_hex($field.$name)."_drop";
+    $changes .= $self->add_header(
+        $table1,
+        'change_fk_before_' . $ref_table,
+        1
+    ) unless !$self->{opts}{'list-tables'};
     $changes .= $self->_add_index_wa_routines(
         $name,
         $temp_index_name,
@@ -1431,11 +1437,15 @@ sub _diff_equal_fks {
     if ($changed_weight < $min_weight) {
         $min_weight = $changed_weight;
     }
+    $changes .= $changed_stmt;
     push @changes, [$changes, {'k' => $weight}];
-    push @changes, [$changed_stmt , {'k' => $changed_weight}];
     $changes = '';
     $weight = $min_weight;
-    $changes = $self->add_header($self->db2->table_by_name($ref_table), 'change_fk', 1) unless !$self->{opts}{'list-tables'};
+    $changes = $self->add_header(
+        $table2,
+        'change_fk_after_' . $ref_table,
+        1
+    ) unless !$self->{opts}{'list-tables'};
     # get index for FK
     my $indices = $table2->indices();
     for my $index (keys %$indices) {
@@ -1462,6 +1472,12 @@ sub _diff_equal_fks {
         }
     }
     $changes .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fkv2;\n";
+    $changes .= $self->_add_index_wa_routines(
+            $name,
+            $temp_index_name,
+            "ALTER TABLE $name DROP INDEX $temp_index_name;",
+            'drop'
+        ) . "\n";
 
     push @changes, [$changes, {'k' => $weight}];
 
