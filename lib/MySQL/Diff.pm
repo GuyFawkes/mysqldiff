@@ -247,7 +247,7 @@ CREATE_STMT
                     my $checked = $changed->{$table_name}{$field_name}{'checked'};
                     if (!$checked) {
                         push @changes, [
-                            $changed->{$table_name}{$field_name}{'stmt'},
+                            $changed->{$table_name}{$field_name}{'header'} . $changed->{$table_name}{$field_name}{'stmt'},
                             {'k' => $changed->{$table_name}{$field_name}{'weight'}}
                         ];
                         $self->{changed_referenced}{$table_name}{$field_name}{'checked'} = 1;
@@ -647,6 +647,8 @@ sub _diff_fields {
                             $self->{added_index}{is_new} = 0;
                         }
                         my $change = '';
+                        my $change_header = '';
+                        $change_header = $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
                         if ($f2 =~ /CHAR\s*\(0\)/is) {
                             debug(3, "field $field is changed to CHAR(0)");
                             $self->{changed_to_empty_char_col}{$field}  = $weight;
@@ -710,6 +712,7 @@ sub _diff_fields {
                                                 $self->{changed_referenced}{$name1}{$field}{'weight'} = $weight;
                                                 $self->{changed_referenced}{$name1}{$field}{'fk'} = $fk_stmt;
                                                 $self->{changed_referenced}{$name1}{$field}{'checked'} = 0;
+                                                $self->{changed_referenced}{$name1}{$field}{'header'} = $change_header;
                                                 $store_fk = 1;
                                                 if ($self->{detected_changed}{$ref_table}{$ref}) {
                                                     my $ref_w = $self->{detected_changed}{$ref_table}{$ref};
@@ -727,8 +730,6 @@ sub _diff_fields {
                                 }
                             }
                             if (!$store_fk) {
-                                my $change_header = '';
-                                $change_header = $self->add_header($table2, "change_column") unless !$self->{opts}{'list-tables'};
                                 $change = $change_header . $change;
                                 # column must be changed/added first
                                 push @changes, [$change, {'k' => $weight}];

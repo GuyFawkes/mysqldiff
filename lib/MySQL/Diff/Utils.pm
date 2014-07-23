@@ -28,6 +28,7 @@ use IO::File;
 # Export Components
 
 use base qw(Exporter);
+use POSIX qw(strftime);
 our @EXPORT_OK = qw(debug_file debug_level debug set_save_quotes get_save_quotes save_logdir get_logdir write_log generate_random_string);
 
 # ------------------------------------------------------------------------------
@@ -143,7 +144,8 @@ Get choice about save saving quotes
         if ($log_dir && $filename && $content) {
             my @chars=('a'..'z','A'..'Z','0'..'9','_');
             if (!$random_string) {
-                $random_string = $log_dir. '/dump_' . time() . '_' . generate_random_string();
+                my $datestring = strftime "%d_%m_%Y_%H_%M", localtime;
+                $random_string = $log_dir. '/dump_' . generate_random_string() . '_' . $datestring;
                 mkdir $random_string
             }
             $filename = $random_string . '/' . $filename ;
