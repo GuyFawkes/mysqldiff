@@ -242,8 +242,8 @@ CREATE_STMT
         # do the rest of job
         my $changed = $self->{changed_referenced};
         if ($changed) {
-            for my $table_name (keys $changed) {
-                for my $field_name (keys $changed->{$table_name}) {
+            for my $table_name (keys %$changed) {
+                for my $field_name (keys %{$changed->{$table_name}}) {
                     my $checked = $changed->{$table_name}{$field_name}{'checked'};
                     if (!$checked) {
                         push @changes, [
