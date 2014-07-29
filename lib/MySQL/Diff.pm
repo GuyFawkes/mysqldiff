@@ -1231,7 +1231,8 @@ sub _diff_indices {
                     }
                 }
             }
-            my $new_type = $table2->is_unique($index) ? 'UNIQUE' : 'INDEX';
+            my $new_type = $table2->is_unique($index) ? 'UNIQUE' :
+                           $table2->is_fulltext($index) ? 'FULLTEXT INDEX' : 'INDEX';
             my $opts = '';
             if ($opts2->{$index}) {
                 $opts = $opts2->{$index};
