@@ -862,7 +862,7 @@ sub _diff_fields {
                 my $change = '';
                 $change =  $self->add_header($table2, $header_text) unless !$self->{opts}{'list-tables'};
                 $change .= "ALTER TABLE $name1 ADD COLUMN $field $field_description$pk;\n";
-                $self->{added_cols}{$field} = 1;
+                $self->{added_cols}{$field} = $weight;
                 if ($prev_field && $prev_field_links && $self->{timestamps}{$prev_field} && !$self->{timestamps}{$field}) {
                     # if last column is not timestamp column itself, and it was added after timestamp column, 
                     # we need to create "AFTER" because timestamp added with weight = 1
@@ -1035,9 +1035,10 @@ sub _diff_indices {
                             }
                         }
                     }
-                    # check index part of this index is second table is its timestamp column
+                    # check index part of this index is second table is its timestamp column, or column was added
                     $index_parts = $table2->indices_parts($index);
                     my $added_pk_index_weight = 0;
+                    my $added_col_index_weight = 0;
                     if ($index_parts) {
                         for $index_part (keys %$index_parts) {
                             if ($is_fk) {
@@ -1065,6 +1066,10 @@ sub _diff_indices {
                             if ($table2->field($index_part) =~ /(CURRENT_TIMESTAMP(?:\(\))?|NOW\(\)|LOCALTIME(?:\(\))?|LOCALTIMESTAMP(?:\(\))?)/) {
                                 $weight = 1;
                                 $is_timestamp = 1;
+                            }
+                            if ($self->{added_cols}{$index_part}) {
+                                debug(3, "Index $index part $index_part was added as column");
+                                $added_col_index_weight = $self->{added_cols}{$index_part};
                             }
                         }
                     }
@@ -1097,12 +1102,23 @@ sub _diff_indices {
                         debug(3, "All parts of index $index was dropped, so timestamp column not needed in drop index");
                     }
                     else {
-                        $index_wa_stmt = $self->_add_index_wa_routines($name1, $index, "ALTER TABLE $name1 DROP INDEX $index;", 'drop');
+                        $index_wa_stmt = $self->_add_index_wa_routines(
+                            $name1,
+                            $index,
+                            "ALTER TABLE $name1 DROP INDEX $index;",
+                            'drop'
+                        );
                         $changes .= $index_wa_stmt;
                         $changes .= " # was $old_type ($indices1->{$index})$ind1_opts"
                             unless $self->{opts}{'no-old-defs'};
                     }
-                    $index_wa_stmt = $self->_add_index_wa_routines($name1, $index, "ALTER TABLE $name1 ADD $new_type $index ($indices2->{$index})$ind2_opts;", 'create');
+
+                    $index_wa_stmt = $self->_add_index_wa_routines(
+                        $name1,
+                        $index,
+                        "ALTER TABLE $name1 ADD $new_type $index ($indices2->{$index})$ind2_opts;",
+                        'create'
+                    );
                     $changes .= "\n" . $index_wa_stmt . "\n";
                     if (keys %{$self->{added_index}} && $auto_increment_check) {
                         # alter column after 
@@ -1117,7 +1133,12 @@ sub _diff_indices {
                         # reset added index description
                         $self->{added_index} = {};
                     }
-                    push @changes, [$changes, {'k' => $added_pk_index_weight ? $added_pk_index_weight : $weight}]; 
+                    if ($added_pk_index_weight) {
+                        $weight = $added_pk_index_weight;
+                    } elsif ($added_col_index_weight) {
+                        $weight = $added_col_index_weight;
+                    }
+                    push @changes, [$changes, {'k' => $weight}];
                 }
             } else {
                 my $auto = _check_for_auto_col($table2, $indices1->{$index}, 0) || '';

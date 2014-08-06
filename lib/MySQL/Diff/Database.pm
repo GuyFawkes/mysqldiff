@@ -342,7 +342,9 @@ sub _get_defs {
         my $errcb = sub {     
             my $message = shift;
             print "Error from DBI while fetching differences:\n";
-            print $DBI::lasth->{Statement} . "\n";
+            if ($DBI::lasth->{Statement}) {
+                print $DBI::lasth->{Statement} . "\n";
+            }
             print DBI->errstr. "\n";
             print "mysqldiff cannot get diff because of this error\n";
             exit(1);  
