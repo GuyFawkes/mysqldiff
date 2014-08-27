@@ -149,12 +149,97 @@ sub diff {
 
     debug(1, "\ncomparing databases");
 
-    my $tables_order = $self->db1->get_order('tables');
-    my $views_order = $self->db1->get_order('views');
-    my $routines_order = $self->db1->get_order('routines');
-    my @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db1->tables();
-    my @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db1->views();
-    my @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db1->routines();
+    my $tables_order;
+    my $views_order;
+    my $routines_order;
+    my @tables_keys;
+    my @views_keys;
+    my @routines_keys;
+
+    $self->{new_tables} = {};
+
+    if (!$self->{opts}{'refs'}) {
+        $tables_order = $self->db2->get_order('tables');
+        $views_order = $self->db2->get_order('views');
+        $routines_order = $self->db2->get_order('routines');
+        @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db2->tables();
+        @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db2->views();
+        @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db2->routines();
+        for my $table2 (@tables_keys) {
+            my $name = $table2->name();
+            debug(1, "looking at table '$name' in second database");
+            debug(6, "table 2 $name = ".Dumper($table2));
+            if ($table_re && $name !~ $table_re) {
+                debug(5,"table '$name' matched $self->{opts}{'table-re'}; ignoring");
+                next;
+            }
+            if (! $self->db1->table_by_name($name) && ! $self->{'used_tables'}{$name}) {
+                $self->{'used_tables'}{$name} = 1;
+                debug(1, "table '$name' added to diff");
+                debug(2, "definition of '$name': ".$table2->def());
+                my $additional_tables = '';
+                my $additional_fk_tables = $table2->fk_tables();
+                if ($additional_fk_tables) {
+                    push @changes, $self->_add_ref_tables($additional_fk_tables, $name);
+                }
+                my $change = '';
+                $change = $self->add_header($table2, "add_table", 1) unless !$self->{opts}{'list-tables'};
+                $change .= $table2->def() . "\n";
+                push @changes, [$change, {'k' => 6}]
+                    unless $self->{opts}{'only-both'};
+                if (!$self->{opts}{'only-both'}) {
+                    $self->{new_tables}{$name} = 1;
+                    my $fks = $table2->foreign_key();
+                    for my $fk (keys %$fks) {
+                        debug(3, "FK $fk for created table $name added");
+                        $change = '';
+                        $change = $self->add_header($table2, 'add_fk') unless !$self->{opts}{'list-tables'};
+                        $change .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fks->{$fk};\n";
+                        push @changes, [$change, {'k' => 1}];
+                    }
+                }
+            }
+        }
+        for my $routine2 (@routines_keys) {
+            my $name = $routine2->name();
+            my $r_type = $routine2->type();
+            debug(1, "looking at $r_type '$name' in second database");
+            if (!$self->db1->routine_by_name($name, $r_type)) {
+                my $change = '';
+                $change = $self->add_header($routine2, "add_routine") unless !$self->{opts}{'list-tables'};
+                $change .= "DELIMITER ;;\n";
+                $change .= $routine2->def(). ";;\n";
+                $change .= "DELIMITER ;\n";
+                push @changes, [$change, {'k' => 5}]
+                    unless $self->{opts}{'only-both'};
+            }
+        }
+        for my $view2 (@views_keys) {
+            my $name = $view2->name();
+            debug(1, "looking at view '$name' in second database");
+            if (!$self->db1->view_by_name($name)) {
+                my $change = '';
+                my $temp_view = '';
+                debug(2, "looking for temporary table for view '$name'");
+                $temp_view = $self->add_header($name.'_temptable', "add_table", 0, 1) unless !$self->{opts}{'list-tables'};
+                $temp_view .= "DROP TABLE IF EXISTS $name;\n" . $self->db2->view_temp($name) . "\n";
+                push @changes, [$temp_view, {'k' => 9}]
+                    unless $self->{opts}{'only-both'};
+                $change = $self->add_header($view2, "add_view") unless !$self->{opts}{'list-tables'};
+                $change .= "DROP TABLE IF EXISTS $name;\n" . $view2->def() . "\n";
+                push @changes, [$change, {'k' => 5}]
+                    unless $self->{opts}{'only-both'};
+            }
+        }
+    }
+
+
+    $tables_order = $self->db1->get_order('tables');
+    $views_order = $self->db1->get_order('views');
+    $routines_order = $self->db1->get_order('routines');
+    @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db1->tables();
+    @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db1->views();
+    @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db1->routines();
 
     # workaround temporary procedure for indexes with same name as FK
     $self->{index_wa} = {};
@@ -324,80 +409,6 @@ CREATE_STMT
                     push @changes, [$change, {'k' => 6}]                 
                          unless $self->{opts}{'only-both'} || $self->{opts}{'keep-old-tables'}; 
                 }
-        }
-    }
-
-    if (!$self->{opts}{'refs'}) {
-        $tables_order = $self->db2->get_order('tables');
-        $views_order = $self->db2->get_order('views');
-        $routines_order = $self->db2->get_order('routines');
-        @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db2->tables();
-        @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db2->views();
-        @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db2->routines();
-        for my $table2 (@tables_keys) {
-            my $name = $table2->name();
-            debug(1, "looking at table '$name' in second database");
-            debug(6, "table 2 $name = ".Dumper($table2));
-            if ($table_re && $name !~ $table_re) {
-                debug(5,"table '$name' matched $self->{opts}{'table-re'}; ignoring");
-                next;
-            }
-            if (! $self->db1->table_by_name($name) && ! $self->{'used_tables'}{$name}) {
-                $self->{'used_tables'}{$name} = 1;
-                debug(1, "table '$name' added to diff");
-                debug(2, "definition of '$name': ".$table2->def());
-                my $additional_tables = '';
-                my $additional_fk_tables = $table2->fk_tables();
-                if ($additional_fk_tables) {
-                    push @changes, $self->_add_ref_tables($additional_fk_tables, $name);
-                }
-                my $change = '';
-                $change = $self->add_header($table2, "add_table", 1) unless !$self->{opts}{'list-tables'};
-                $change .= $table2->def() . "\n";
-                push @changes, [$change, {'k' => 6}]
-                    unless $self->{opts}{'only-both'};
-                if (!$self->{opts}{'only-both'}) {
-                    my $fks = $table2->foreign_key();
-                    for my $fk (keys %$fks) {
-                        debug(3, "FK $fk for created table $name added");
-                        $change = '';
-                        $change = $self->add_header($table2, 'add_fk') unless !$self->{opts}{'list-tables'};
-                        $change .= "ALTER TABLE $name ADD CONSTRAINT $fk FOREIGN KEY $fks->{$fk};\n";
-                        push @changes, [$change, {'k' => 1}];
-                    }
-                }
-            }
-        }
-        for my $routine2 (@routines_keys) {
-            my $name = $routine2->name();
-            my $r_type = $routine2->type();
-            debug(1, "looking at $r_type '$name' in second database");
-            if (!$self->db1->routine_by_name($name, $r_type)) {
-                my $change = '';
-                $change = $self->add_header($routine2, "add_routine") unless !$self->{opts}{'list-tables'};
-                $change .= "DELIMITER ;;\n";
-                $change .= $routine2->def(). ";;\n";
-                $change .= "DELIMITER ;\n";
-                push @changes, [$change, {'k' => 5}]
-                    unless $self->{opts}{'only-both'};
-            }
-        }
-        for my $view2 (@views_keys) {
-            my $name = $view2->name();
-            debug(1, "looking at view '$name' in second database");
-            if (!$self->db1->view_by_name($name)) {
-                my $change = '';
-                my $temp_view = '';
-                debug(2, "looking for temporary table for view '$name'");
-                $temp_view = $self->add_header($name.'_temptable', "add_table", 0, 1) unless !$self->{opts}{'list-tables'};
-                $temp_view .= "DROP TABLE IF EXISTS $name;\n" . $self->db2->view_temp($name) . "\n";
-                push @changes, [$temp_view, {'k' => 9}] 
-                    unless $self->{opts}{'only-both'};    
-                $change = $self->add_header($view2, "add_view") unless !$self->{opts}{'list-tables'};
-                $change .= "DROP TABLE IF EXISTS $name;\n" . $view2->def() . "\n";
-                push @changes, [$change, {'k' => 5}]
-                    unless $self->{opts}{'only-both'};
-            }
         }
     }
 
@@ -663,6 +674,17 @@ sub _diff_fields {
                             }
                             my $col_fks1 = $table1->get_fk_by_col($field);
                             my $col_fks2 = $table2->get_fk_by_col($field);
+                            my $col_ref  = $table2->get_referenced($field);
+                            # if some table was created with foreign_key_checks === 0, and has FK to table
+                            # which doesn't exists before CHANGE column
+                            if ($col_ref) {
+                                for my $col_ref_key (keys %$col_ref) {
+                                    my $col_ref_tbl = $col_ref->{$col_ref_key}{'table'};
+                                    if ($self->{new_tables}{$col_ref_tbl}) {
+                                        $weight = 7;
+                                    }
+                                }
+                            }
                             my $store_fk = 0;
                             $self->{detected_changed}{$name1}{$field} = $weight;
                             # there is some references to current changed field
