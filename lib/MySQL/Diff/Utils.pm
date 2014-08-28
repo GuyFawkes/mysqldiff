@@ -145,8 +145,10 @@ Get choice about save saving quotes
             my @chars=('a'..'z','A'..'Z','0'..'9','_');
             if (!$random_string) {
                 my $datestring = strftime "%d_%m_%Y_%H_%M", localtime;
-                $random_string = $log_dir. '/dump_' . generate_random_string() . '_' . $datestring;
-                mkdir $random_string
+                my $log_path   = $log_dir. '/dump__' . $datestring;
+                $random_string = $log_path . '/' . generate_random_string();
+                mkdir $log_path;
+                mkdir $random_string;
             }
             $filename = $random_string . '/' . $filename ;
             if ($append) {

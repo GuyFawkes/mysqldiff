@@ -159,12 +159,16 @@ sub diff {
     $self->{new_tables} = {};
 
     if (!$self->{opts}{'refs'}) {
+
+        $tables_order = $self->db1->get_order('tables');
+        @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db1->tables();
+
+        for my $table1 (@tables_keys) {
+            $self->{'used_tables'}{$table1->name()} = 1;
+        }
+
         $tables_order = $self->db2->get_order('tables');
-        $views_order = $self->db2->get_order('views');
-        $routines_order = $self->db2->get_order('routines');
         @tables_keys = sort { $tables_order->{$a->name()} <=> $tables_order->{$b->name()} } $self->db2->tables();
-        @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db2->views();
-        @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db2->routines();
         for my $table2 (@tables_keys) {
             my $name = $table2->name();
             debug(1, "looking at table '$name' in second database");
@@ -198,37 +202,6 @@ sub diff {
                         push @changes, [$change, {'k' => 1}];
                     }
                 }
-            }
-        }
-        for my $routine2 (@routines_keys) {
-            my $name = $routine2->name();
-            my $r_type = $routine2->type();
-            debug(1, "looking at $r_type '$name' in second database");
-            if (!$self->db1->routine_by_name($name, $r_type)) {
-                my $change = '';
-                $change = $self->add_header($routine2, "add_routine") unless !$self->{opts}{'list-tables'};
-                $change .= "DELIMITER ;;\n";
-                $change .= $routine2->def(). ";;\n";
-                $change .= "DELIMITER ;\n";
-                push @changes, [$change, {'k' => 5}]
-                    unless $self->{opts}{'only-both'};
-            }
-        }
-        for my $view2 (@views_keys) {
-            my $name = $view2->name();
-            debug(1, "looking at view '$name' in second database");
-            if (!$self->db1->view_by_name($name)) {
-                my $change = '';
-                my $temp_view = '';
-                debug(2, "looking for temporary table for view '$name'");
-                $temp_view = $self->add_header($name.'_temptable', "add_table", 0, 1) unless !$self->{opts}{'list-tables'};
-                $temp_view .= "DROP TABLE IF EXISTS $name;\n" . $self->db2->view_temp($name) . "\n";
-                push @changes, [$temp_view, {'k' => 9}]
-                    unless $self->{opts}{'only-both'};
-                $change = $self->add_header($view2, "add_view") unless !$self->{opts}{'list-tables'};
-                $change .= "DROP TABLE IF EXISTS $name;\n" . $view2->def() . "\n";
-                push @changes, [$change, {'k' => 5}]
-                    unless $self->{opts}{'only-both'};
             }
         }
     }
@@ -409,6 +382,44 @@ CREATE_STMT
                     push @changes, [$change, {'k' => 6}]                 
                          unless $self->{opts}{'only-both'} || $self->{opts}{'keep-old-tables'}; 
                 }
+        }
+    }
+
+    if (!$self->{opts}{'refs'}) {
+        $views_order = $self->db2->get_order('views');
+        $routines_order = $self->db2->get_order('routines');
+        @views_keys = sort { $views_order->{$a->name()} <=> $views_order->{$b->name()} } $self->db2->views();
+        @routines_keys = sort { $routines_order->{$a->name()} <=> $routines_order->{$b->name()} } $self->db2->routines();
+        for my $routine2 (@routines_keys) {
+            my $name = $routine2->name();
+            my $r_type = $routine2->type();
+            debug(1, "looking at $r_type '$name' in second database");
+            if (!$self->db1->routine_by_name($name, $r_type)) {
+                my $change = '';
+                $change = $self->add_header($routine2, "add_routine") unless !$self->{opts}{'list-tables'};
+                $change .= "DELIMITER ;;\n";
+                $change .= $routine2->def(). ";;\n";
+                $change .= "DELIMITER ;\n";
+                push @changes, [$change, {'k' => 5}]
+                    unless $self->{opts}{'only-both'};
+            }
+        }
+        for my $view2 (@views_keys) {
+            my $name = $view2->name();
+            debug(1, "looking at view '$name' in second database");
+            if (!$self->db1->view_by_name($name)) {
+                my $change = '';
+                my $temp_view = '';
+                debug(2, "looking for temporary table for view '$name'");
+                $temp_view = $self->add_header($name.'_temptable', "add_table", 0, 1) unless !$self->{opts}{'list-tables'};
+                $temp_view .= "DROP TABLE IF EXISTS $name;\n" . $self->db2->view_temp($name) . "\n";
+                push @changes, [$temp_view, {'k' => 9}]
+                    unless $self->{opts}{'only-both'};
+                $change = $self->add_header($view2, "add_view") unless !$self->{opts}{'list-tables'};
+                $change .= "DROP TABLE IF EXISTS $name;\n" . $view2->def() . "\n";
+                push @changes, [$change, {'k' => 5}]
+                    unless $self->{opts}{'only-both'};
+            }
         }
     }
 
