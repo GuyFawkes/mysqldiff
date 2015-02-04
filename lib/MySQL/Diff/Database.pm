@@ -203,7 +203,7 @@ Returns the temporary table definition (see L<MySQL::Diff::Table>) for the given
 
 sub view_temp {
     my ($self,$name) = @_;
-    return $self->{_temp_view_tables}{$name};
+    return $self->{_temp_view_tables}{$name} || '';
 }
 
 =item * view_by_name( $name )
