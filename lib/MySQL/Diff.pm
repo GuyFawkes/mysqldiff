@@ -820,7 +820,11 @@ sub _diff_fields {
                         if (!$after_ts) {
                             if ($alters->{$prev_field} && !($table2->isa_primary($prev_field))) {
                                 # field before was already added, so it's safe to add current field with AFTER clause
-                                $position = " AFTER $prev_field";
+                                if ($self->{added_cols}{$prev_field} && ($self->{added_cols}{$prev_field} != 1)) {
+                                    $position = " AFTER $prev_field";
+                                } else {
+                                    $position = '';
+                                }
                             } else {
                                 $alters->{$prev_field} = "ALTER TABLE $name1 CHANGE COLUMN $field $field $fields2->{$field} AFTER $prev_field;\n";
                                 $position = '';
