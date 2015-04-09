@@ -1782,6 +1782,15 @@ sub _diff_options {
         push @changes, [$change, {'k' => 0}]; # the lastest
     }
 
+    my $charset1 = $table1->table_charset();
+    my $charset2 = $table2->table_charset();
+
+    if ($charset1 ne $charset2) {
+        my $charset_change = $self->add_header($table1, 'change_charsets') unless !$self->{opts}{'list-tables'};
+        $charset_change .= "ALTER TABLE $name CONVERT TO CHARACTER SET $charset2;\n";
+        push @changes, [$charset_change, {'k' => 0}]; # the lastest
+    }
+
     return @changes;
 }
 

@@ -118,6 +118,10 @@ Returns a hash reference to parts of composite index fields
 
 Returns the additional options added to the table definition.
 
+=item * table_charset
+
+Returns the character set of table
+
 =item * isa_field
 
 Returns 1 if given field is used in the current table definition, otherwise 
@@ -162,6 +166,7 @@ sub indices         { my $self = shift; return $self->{indices};        }
 sub indices_opts    { my $self = shift; return $self->{indices_opts};   }
 sub indices_parts   { my $self = shift; return $self->{indices_parts}{$_[0]};  }
 sub options         { my $self = shift; return $self->{options};        }
+sub table_charset   { my $self = shift; return $self->{table_charset}   }
 sub foreign_key     { my $self = shift; return $self->{foreign_key};    }
 sub fk_tables       { my $self = shift; return $self->{fk_tables};      }
 sub get_fk_by_col   { my $self = shift; return $self->{fk_by_column}{$_[0]}; }
@@ -355,8 +360,14 @@ sub _parse {
             next;
         }
 
+
         write_log('tables_log', $_, 1);
         croak "unparsable line in definition for table '$self->{name}':\n$_";
+    }
+
+    if ($table_end =~ /CHARSET=(.*?)(?:\s|;)/i) {
+        $self->{table_charset} = $1;
+        debug(4,"got character set " . $self->{table_charset});
     }
 
     debug(6, "Table's fields links: ".Dumper($self->{fields_links}));
