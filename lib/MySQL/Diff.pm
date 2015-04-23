@@ -22,7 +22,7 @@ the second.
 
 use warnings;
 
-our $VERSION = '0.51';
+our $VERSION = '0.52';
 
 # ------------------------------------------------------------------------------
 # Libraries
@@ -1035,9 +1035,11 @@ sub _diff_indices {
                     $auto_increment_check = $auto  ? 1 : 0;
                     my $changes = '';
                     $changes = $self->add_header($table2, "change_index") unless !$self->{opts}{'list-tables'};
-                    $changes .= $auto ? $self->_index_auto_col($table1, $indices1->{$index}, $self->{opts}{'no-old-defs'}) : '';
                     if ($auto) {
-                        my $auto_index_name = "mysqldiff_".md5_hex($name1."_".$auto);
+                        my $auto_index_data = $self->_index_auto_col($table1, $indices1->{$index}, $self->{opts}{'no-old-defs'});
+                        my $auto_index_name = $auto_index_data->{'name'};
+                        my $auto_index_stmt = $auto_index_data->{'stmt'};
+                        $changes .= $auto_index_stmt;
                         debug(3, "Auto column $auto indexed with index called $auto_index_name");
                         if (!$self->{temporary_indexes}{$auto_index_name}) {
                             $self->{temporary_indexes}{$auto_index_name} = $auto;
@@ -1187,9 +1189,11 @@ sub _diff_indices {
                 $auto_increment_check = $auto ? 1 : 0;
                 my $changes = '';
                 $changes = $self->add_header($table1, "drop_index") unless !$self->{opts}{'list-tables'};
-                $changes .= $auto ? $self->_index_auto_col($table1, $indices1->{$index}, $self->{opts}{'no-old-defs'}) : '';
                 if ($auto) {
-                    my $auto_index_name = "mysqldiff_".md5_hex($name1."_".$auto);
+                    my $auto_index_data = $self->_index_auto_col($table1, $indices1->{$index}, $self->{opts}{'no-old-defs'});
+                    my $auto_index_name = $auto_index_data->{'name'};
+                    my $auto_index_stmt = $auto_index_data->{'stmt'};
+                    $changes .= $auto_index_stmt;
                     debug(3, "Auto column $auto indexed with index called $auto_index_name");
                     if ($auto_increment_check && $self->{dropped_columns}{$auto}) {
                         debug(3, "Index $auto_index_name was not added to temporary indexes, because of column will be dropped");
@@ -1388,10 +1392,12 @@ sub _diff_primary_key {
     if ( ($primary1 && !$primary2) || ($primary1 ne $primary2) ) {
         debug(2, "primary key difference detected");
         my $auto = _check_for_auto_col($table2, $primary1) || '';
-        $changes .= $auto ? $self->_index_auto_col($table2, $auto, $self->{opts}{'no-old-defs'}) : '';
         if ($auto) {
+            my $auto_index_data = $self->_index_auto_col($table2, $auto, $self->{opts}{'no-old-defs'});
+            my $auto_index_name = $auto_index_data->{'name'};
+            my $auto_index_stmt = $auto_index_data->{'stmt'};
+            $changes .= $auto_index_stmt;
             debug(3, "Auto column $auto indexed");
-            my $auto_index_name = "mysqldiff_".md5_hex($name1."_".$auto);
             if (!$self->{temporary_indexes}{$auto_index_name}) {
                 $self->{temporary_indexes}{$auto_index_name} = $auto;
             }
@@ -1677,6 +1683,7 @@ sub _check_for_auto_col {
 sub _index_auto_col {
     my ($self, $table, $field, $comment) = @_;
     my $name = $table->name;
+    my $indexed;
     my $auto_index_name = "mysqldiff_".md5_hex($name."_".$field);
     if (!($field =~ /\(.*?\)/)) {
         $field = '(' . $field . ')';
@@ -1685,7 +1692,10 @@ sub _index_auto_col {
     my $changes = "ALTER TABLE $name ADD INDEX $auto_index_name $field;";
     $changes .= " # auto columns must always be indexed"
                         unless $comment;
-    return $self->_add_index_wa_routines($name, $auto_index_name, $changes, 'create') . "\n";
+
+    $indexed->{'stmt'} = $self->_add_index_wa_routines($name, $auto_index_name, $changes, 'create') . "\n";
+    $indexed->{'name'} = $auto_index_name;
+    return $indexed;
 }
 
 sub _diff_options {

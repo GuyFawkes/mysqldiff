@@ -17,7 +17,7 @@ Parses a routine definition into component parts.
 use warnings;
 use strict;
 
-our $VERSION = '0.47';
+our $VERSION = '0.52';
 
 # ------------------------------------------------------------------------------
 # Libraries
